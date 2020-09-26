@@ -1,0 +1,76 @@
+#GET system proxy in windows
+#$webproxy = (get-itemproperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\InternetSettings').ProxyServer
+#[System.Net.WebRequest]::GetSystemWebProxy()
+
+### WINDOWS ##
+#DNS server on DC, zone storage and replication, multimaster replication
+#OS logs -> DNS "Enhaced logging"
+
+Get-DnsServerSetting
+
+#Obtain DNS Zone stats
+$statistics = Get-DnsServerStatistics –ZoneName <contoso.com> 
+$statistics.ZoneQueryStatistics #--> Contains stats "QueriesFailure" 
+$statistics.ZoneTransferStatistics
+$statistics.ZoneUpdateStatistics
+
+#Crowdinspect
+https://www.crowdstrike.com/resources/community-tools/crowdinspect-tool/i
+#Systernals
+autoruns64.exe #-> save
+Process Monitor #->Filter: Path contains domain, operation is not read file, operation is UDP send --> Check if there is any process that is not svchost.
+
+##DNS logging wth powershell
+$log = New-Object System.Diagnostics.Eventing.Reader.EventLogConfiguration 'Microsoft-Windows-DNS-Client/Operational'
+$log.IsEnabled=$true
+$log.SaveChanges()
+#Extract, parse query info and save to csv
+get-winevent -LogName Microsoft-Windows-DNS-Client/Operational -FilterXPath 'Event[System[EventRecordID > 0 and EventID = 3008]] and Event[EventData [Data[@Name="QueryStatus"] = 0]]' | %{([xml]$_.ToXml())} | %{ ("{0},{1}" -f $_.Event.System.Execution.ProcessID, ($_.Event.EventData.Data | Where-Object {$_.Name -eq 'QueryName' -or $_.Name -eq 'QueryResults'}  | Select-Object '#text' | ConvertTo-Csv -NoTypeInformation | Select -Skip 1 | Out-String  | %{$_.replace('"', '')} ).replace("`r`n",',')  )}
+#Clean up
+$log.IsEnabled=$false
+$log.SaveChanges()
+
+#Test DNS Request
+Resolve-DnsName 
+
+#PACKET CAPTURE IN CMD
+#netsh trace start capture=yes IPv4.Address=<ip> #-->save etl for eventvwr.msc 
+#netsh trace show capturefilterhelp
+netsh trace start capture=yes Protocol=UDP 
+netsh trace stop
+
+-----
+
+### RED HAT ###
+#Open files on UDP, displays process ID
+lsof -i udp
+netstat -puntea | grep :53
+#Save to a log file
+watch -n1 netstat -puntea | grep :53 > watch_dns.txt
+
+#AUDIT DNS IN RED HAT
+auditctl -a exit,always -F arch=b64 -F a0=2 -F a1\&=2 -S socket -k SOCKET
+#30 minutes after, run the following comand This will show, binary, pid and ppid (parent process ID)
+ausearch -i -ts today -k SOCKET > HOSTNAME_dnsausearch
+#Remove The Audit Rule
+auditctl -d exit,always -F arch=b64 -F a0=2 -F a1\&=2 -S socket -k SOCKET
+
+#audit process with strace, output to file
+strace -t -p <pid> -o logfile.txt
+tail -f logfile.txt
+
+#strace generate statistics reports
+strace -c -o <pid> -i logfile_stats.txt
+
+cat /etc/resolv.conf
+ps aux
+service --status-all
+crontab -ls
+#list all services not disabled
+systemctl list-unit-files | grep -v disabled 
+#list processes associated with a particular service / Lists all running processes based on their service
+systemd-cgtop
+
+#Other
+#perform nslookup and nsloolup <domain> <resolver> and check in Crowdstrike
+#Check firepower
